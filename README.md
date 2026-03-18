@@ -5,7 +5,7 @@
 It is recommended to install necessary dependencies using a Python `venv`:
 
 ```
-python3 -m venv .venv & source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 ```
 
 Once in an environment where packages can be installed, use `requirements.txt` to install the necessary dependencies:
