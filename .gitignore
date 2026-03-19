@@ -3,3 +3,4 @@
 crash*
 **/.DS_Store
 .idea/
+htmlcov/
