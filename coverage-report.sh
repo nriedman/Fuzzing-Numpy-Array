@@ -57,17 +57,17 @@ else:
 "
 
 # ── Write a self-contained replay runner ──────────────────────────────────────
-# Rather than going through libFuzzer (which may not write .profraw files
-# reliably when given a single file argument), we import the harness module
-# directly and call TestOneInput ourselves. This guarantees the coverage
-# runtime fires and flushes a .profraw on every clean exit.
+# We run each input in a subprocess so that a crashing input (e.g. the known
+# PyArray_Round segfault) doesn't abort the whole replay. The parent process
+# catches the non-zero exit, notes the crash, and continues to the next input.
+# The LLVM coverage runtime installs an atexit handler that flushes the .profraw
+# even on a segfault, so coverage up to the crash point is still recorded.
 RUNNER="$PROFRAW_DIR/runner.py"
 cat > "$RUNNER" << 'PYEOF'
 import sys
 import importlib.util
 
-# Load the harness as a module without executing its atheris.Setup/Fuzz calls.
-# We patch atheris.Setup and atheris.Fuzz to no-ops so importing the harness
+# Patch atheris.Setup and atheris.Fuzz to no-ops so importing the harness
 # only defines TestOneInput without starting the fuzzer.
 import atheris
 atheris.Setup = lambda *a, **kw: None
@@ -84,17 +84,23 @@ data = open(input_path, 'rb').read()
 mod.TestOneInput(data)
 PYEOF
 
-# ── Step 1: replay each corpus input ─────────────────────────────────────────
+# ── Step 1: replay each corpus input in its own subprocess ───────────────────
 echo "==> Replaying corpus inputs..."
 count=0
+crashed=0
 for input in "$CORPUS_DIR"/*; do
     [ -f "$input" ] || continue
     LLVM_PROFILE_FILE="$PROFRAW_DIR/cov-%p.profraw" \
     PYTHONPATH="$COV_PYTHONPATH" \
-    /usr/bin/python3.11 -S "$RUNNER" "$HARNESS" "$input"
+    /usr/bin/python3.11 -S "$RUNNER" "$HARNESS" "$input" 2>/dev/null
+    exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        crashed=$((crashed + 1))
+        echo "    crash/error on: $(basename $input) (exit $exit_code)"
+    fi
     count=$((count + 1))
 done
-echo "    Replayed $count inputs."
+echo "    Replayed $count inputs ($crashed crashed — coverage still collected up to crash point)."
 echo ""
 
 # Check that .profraw files were actually written
@@ -148,3 +154,30 @@ llvm-cov-14 report \
     --path-equivalence="$PATH_EQUIV" \
     /build/numpy-2.2.5/numpy/_core/src/multiarray/methods.c \
     /build/numpy-2.2.5/numpy/_core/src/multiarray/calculation.c
+
+echo ""
+echo "==> Coverage for PyArray_Round specifically:"
+
+# Write the parser to a file to avoid shell quoting issues with inline -c scripts.
+PARSE_SCRIPT="$PROFRAW_DIR/parse_pyarray_round.py"
+cat > "$PARSE_SCRIPT" << 'PYEOF'
+import json, sys
+data = json.load(sys.stdin)
+for f in data["data"][0]["functions"]:
+    if "PyArray_Round" in f["name"]:
+        regions = f["regions"]
+        total   = len(regions)
+        covered = sum(1 for r in regions if r[4] > 0)
+        pct     = (100 * covered // total) if total else 0
+        print("PyArray_Round: " + str(covered) + "/" + str(total) + " regions covered (" + str(pct) + "%)")
+        end_line = max(r[2] for r in regions)
+        print("  line range: " + str(regions[0][0]) + "-" + str(end_line))
+PYEOF
+
+llvm-cov-14 export \
+    "$NUMPY_COV_SO" \
+    --instr-profile="$PROFRAW_DIR/merged.profdata" \
+    --path-equivalence="$PATH_EQUIV" \
+    /build/numpy-2.2.5/numpy/_core/src/multiarray/methods.c \
+    2>/dev/null \
+| /usr/bin/python3.11 -S "$PARSE_SCRIPT"

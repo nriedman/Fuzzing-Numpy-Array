@@ -93,9 +93,21 @@ This fuzzer ended up being too simplistic, and we were only able to cover a sing
 execution path through the C source code. We call this "source-blind" because we did
 not implement the test harness to specifically target paths in the source code.
 
-Using this fuzzer, we reached the following code coverage:
+Using this fuzzer, we reached the following code coverage (`N = 1` inputs):
 
+#### File-level coverage (round-related source)
+ 
+| File | Regions | Region Cover | Lines | Line Cover | Branches | Branch Cover |
+|---|---|---|---|---|---|---|
+| `methods.c` | 2086 | 1.25% | 2078 | 1.78% | 812 | 0.99% |
+| `calculation.c` | 667 | 10.04% | 669 | 7.62% | 244 | 8.20% |
+| **Total** | **2753** | **3.38%** | **2747** | **3.20%** | **1056** | **2.65%** |
+ 
+#### Function-level coverage
 
+| Function | File | Region Coverage |
+|---|---|---|
+| `PyArray_Round` | `methods.c` | 103/318 (32%) |
 
 ### 3. Source-aware exploration
 
@@ -107,9 +119,21 @@ Finally, after investigating the source code coverage from our previous test har
 we extended the test harness to more readily expose options to the fuzzer that we know will
 reach more control blocks.
 
-Using this fuzzer, we reached the following code coverage:
+Using this fuzzer, we reached the following code coverage (`N = 6` inputs):
 
-
+#### File-level coverage (round-related source)
+ 
+| File | Regions | Region Cover | Lines | Line Cover | Branches | Branch Cover |
+|---|---|---|---|---|---|---|
+| `methods.c` | 2086 | 1.25% | 2078 | 1.78% | 812 | 0.99% |
+| `calculation.c` | 667 | 12.74% | 669 | 10.01% | 244 | 10.66% |
+| **Total** | **2753** | **4.03%** | **2747** | **3.79%** | **1056** | **3.22%** |
+ 
+#### Function-level coverage
+ 
+| Function | File | Region Coverage |
+|---|---|---|
+| `PyArray_Round` | `methods.c` | 136/318 (42%) |
 
 ---
 
@@ -117,27 +141,40 @@ Using this fuzzer, we reached the following code coverage:
 
 After fuzzing has built up a corpus, replay it through the coverage-instrumented
 NumPy build to produce a report showing which lines of `PyArray_Round` and
-surrounding code were reached.
+surrounding code were reached. For example:
 
 ```bash
-cd /home/student
-./run-coverage-report.sh fuzz_numpy_round.py corpus/
+./run-coverage-report.sh fuzz-round-v2.py corpus-v2/
 ```
 
 The script prints a per-file summary table to the terminal showing line, region,
-and branch coverage for `methods.c` (which contains `PyArray_Round`) and
-`calculation.c`.
+and branch coverage for `calculation.c` (which contains `PyArray_Round`) and
+`methods.c` (which contains wrappers invoked by `numpy.round`).
 
-To include crash inputs in the coverage replay, place them in the corpus
-directory first:
+Ideally, crashing inputs would be noted in the output but wouldn't abort the replay —
+coverage up to the crash point would still be recorded. However, this did not
+end up working in our case, possibly related to the unavoidable crash in the first
+fuzzer.
+
+An additional utility script can be used to print the annotated source code
+from the most recent coverage report:
 
 ```bash
-cp crash-* corpus/
-./run-coverage-report.sh fuzz_numpy_round.py corpus/
+./show-annotated-source.sh <tmp_code>
 ```
 
-Crashing inputs will be noted in the output but won't abort the replay —
-coverage up to the crash point is still recorded.
+where `tmp_code` is the random name of the temporary file created by the last
+coverage report. The name is printed to the terminal, and may look something like:
+
+```
+==> Profraw tmp:  /tmp/tmp.cjaXOvYP09
+```
+
+In this case, the command to show annotated source code would be:
+
+```bash
+./show-annotated-source.sh cjaXOvYP09
+```
 
 ---
 
@@ -149,6 +186,7 @@ coverage up to the crash point is still recorded.
 | `run_docker.sh` | Convenience script to build and run the container |
 | `fuzz-round*.py` | Atheris fuzz harnesses targeting `np.round` |
 | `run-coverage-report.sh` | Replays a corpus and prints a coverage summary |
+| `show-annotated-source.sh` | Prints the most recent annotated source code |
 
 ---
 
