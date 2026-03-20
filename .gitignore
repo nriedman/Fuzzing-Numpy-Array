@@ -4,3 +4,6 @@ crash*
 **/.DS_Store
 .idea/
 htmlcov/
+shared/
+__pycache__
+*.profraw
